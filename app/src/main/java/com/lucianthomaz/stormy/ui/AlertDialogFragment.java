@@ -1,10 +1,12 @@
-package com.lucianthomaz.stormy;
+package com.lucianthomaz.stormy.ui;
 
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.app.DialogFragment;
 import android.content.Context;
 import android.os.Bundle;
+
+import com.lucianthomaz.stormy.R;
 
 /**
  * Created by Lucian on 02/04/2015.

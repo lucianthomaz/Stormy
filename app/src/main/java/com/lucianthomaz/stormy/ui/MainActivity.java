@@ -2,11 +2,15 @@ package com.lucianthomaz.stormy.ui;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentSender;
 import android.graphics.drawable.Drawable;
+import android.location.Address;
+import android.location.Geocoder;
+import android.location.Location;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
-import android.support.v7.app.ActionBarActivity;
 import android.os.Bundle;
+import android.support.v7.app.ActionBarActivity;
 import android.util.Log;
 import android.view.View;
 import android.widget.ImageView;
@@ -14,6 +18,12 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.location.LocationListener;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.maps.model.LatLng;
 import com.lucianthomaz.stormy.R;
 import com.lucianthomaz.stormy.weather.Current;
 import com.lucianthomaz.stormy.weather.Day;
@@ -30,19 +40,31 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.Locale;
 
 import butterknife.ButterKnife;
 import butterknife.InjectView;
 import butterknife.OnClick;
 
 
-public class MainActivity extends ActionBarActivity {
+public class MainActivity extends ActionBarActivity implements
+        GoogleApiClient.ConnectionCallbacks,
+        GoogleApiClient.OnConnectionFailedListener,
+        LocationListener {
 
     public static final String TAG = MainActivity.class.getSimpleName();
     public static final String DAILY_FORECAST = "DAILY_FORECAST";
     public static final String HOURLY_FORECAST = "HOURLY_FORECAST";
 
     private Forecast mForecast;
+    private GoogleApiClient mGoogleApiClient;
+    private final static int CONNECTION_FAILURE_RESOLUTION_REQUEST = 9000;
+    private LocationRequest mLocationRequest;
+    private double latitude = -1;
+    private double longitude = -1;
+    private Geocoder gcd = new Geocoder(this, Locale.getDefault());
+    private String mCityName;
 
     @InjectView(R.id.timeLabel) TextView mTimeLabel;
     @InjectView(R.id.temperatureLabel) TextView mTemperatureLabel;
@@ -62,17 +84,35 @@ public class MainActivity extends ActionBarActivity {
 
         mProgressBar.setVisibility(View.INVISIBLE);
 
-        final double latitude = -30.05848996;
-        final double longitude = -51.16728902;
+        mGoogleApiClient = new GoogleApiClient.Builder(this)
+                .addConnectionCallbacks(this)
+                .addOnConnectionFailedListener(this)
+                .addApi(LocationServices.API)
+                .build();
+
+        // Create the LocationRequest object
+        mLocationRequest = LocationRequest.create()
+                .setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY)
+                .setInterval(10 * 1000)        // 10 seconds, in milliseconds
+                .setFastestInterval(1 * 1000); // 1 second, in milliseconds
 
         mRefreshImageView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                getForecast(latitude, longitude);
+                mCityName = getCityName(latitude, longitude);
+                if (latitude == -1 || longitude == -1) {
+                    Toast.makeText(MainActivity.this, "Please, check that your location settings are enable and refresh the page!", Toast.LENGTH_LONG).show();
+                }
+                else
+                    getForecast(latitude, longitude);
             }
         });
 
-        getForecast(latitude, longitude);
+        if (latitude == -1 || longitude == -1) {
+            Toast.makeText(this, "Please, check that your location settings are enable and refresh the page!", Toast.LENGTH_LONG).show();
+        }
+        else
+            getForecast(latitude, longitude);
     }
 
     private void getForecast(double latitude, double longitude) {
@@ -153,8 +193,8 @@ public class MainActivity extends ActionBarActivity {
         mHumidityValue.setText(current.getHumidity() + "");
         mPrecipValue.setText(current.getPrecipChance() + "%");
         mSummaryLabel.setText(current.getSummary());
-        //mLocationLabel.setText(current.getTimeZone());
-        mLocationLabel.setText("Porto Alegre, RS");
+        mLocationLabel.setText(mCityName);
+//        mLocationLabel.setText("Porto Alegre, RS");
 
         Drawable drawable = getResources().getDrawable(current.getIconId());
         mIconImageView.setImageDrawable(drawable);
@@ -265,5 +305,79 @@ public class MainActivity extends ActionBarActivity {
         Intent intent = new Intent(this, HourlyForecastActivity.class);
         intent.putExtra(HOURLY_FORECAST, mForecast.getHourlyForecast());
         startActivity(intent);
+    }
+
+    @Override
+    public void onConnected(Bundle bundle) {
+        Location location = LocationServices.FusedLocationApi.getLastLocation(mGoogleApiClient);
+        if (location == null) {
+            LocationServices.FusedLocationApi.requestLocationUpdates(mGoogleApiClient, mLocationRequest, this);
+        }
+        else {
+            handleNewLocation(location);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (mGoogleApiClient.isConnected()) {
+            LocationServices.FusedLocationApi.removeLocationUpdates(mGoogleApiClient, this);
+            mGoogleApiClient.disconnect();
+        }
+    }
+
+    @Override
+    public void onConnectionSuspended(int i) {
+        Log.i(TAG, "Location services suspended. Please reconnect.");
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        mGoogleApiClient.connect();
+    }
+
+    @Override
+    public void onConnectionFailed(ConnectionResult connectionResult) {
+        if (connectionResult.hasResolution()) {
+            try {
+                // Start an Activity that tries to resolve the error
+                connectionResult.startResolutionForResult(this, CONNECTION_FAILURE_RESOLUTION_REQUEST);
+            } catch (IntentSender.SendIntentException e) {
+                e.printStackTrace();
+            }
+        } else {
+            Log.i(TAG, "Location services connection failed with code " + connectionResult.getErrorCode());
+        }
+    }
+
+    @Override
+    public void onLocationChanged(Location location) {
+        handleNewLocation(location);
+    }
+
+    private void handleNewLocation(Location location) {
+        Log.d(TAG, location.toString());
+
+        double currentLatitude = location.getLatitude();
+        double currentLongitude = location.getLongitude();
+        latitude = currentLatitude;
+        longitude = currentLongitude;
+        LatLng latLng = new LatLng(currentLatitude, currentLongitude);
+
+    }
+
+    private String getCityName(double lat, double lgt) {
+        String cityName = "City not found";
+        List<Address> addresses = null;
+        try {
+            addresses = gcd.getFromLocation(lat, lgt, 1);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        if (addresses.size() > 0)
+            cityName = addresses.get(0).getSubAdminArea();
+        return cityName;
     }
 }
